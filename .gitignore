@@ -1,0 +1,26 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment variables
+.env
+config.yaml
+
+# Logs
+logs/
+*.log
+
+# Database backups
+backups/
+*.db-journal
+
+# Database
+data/
+*.db
