@@ -5,7 +5,7 @@
 from typing import Optional, List, TypedDict
 from datetime import date, datetime
 
-from data_sources import fetch_lbma_price, fetch_sge_price, fetch_usd_cny_rate
+from data_sources import fetch_lbma_price, fetch_sge_price, fetch_usd_cny_rate, fetch_multi_currency_rates
 from validator import validate_daily_data, calculate_theoretical_price
 from database.repository import (
     GoldPriceRecord,
@@ -13,13 +13,19 @@ from database.repository import (
     get_record_by_date,
     get_latest_n_records,
 )
+from database.fx_repository import (
+    ExchangeRateRecord,
+    upsert_exchange_rate,
+    get_exchange_rate_by_date,
+    get_latest_exchange_rates,
+)
 
 
 # ======================
 # 数据结构
 # ======================
-class CollectionResult(TypedDict):
-    """采集任务执行结果"""
+class GoldCollectionResult(TypedDict):
+    """黄金价格采集任务执行结果"""
     success: bool                          # 是否成功入库
     date: str                              # 日期
     record: Optional[GoldPriceRecord]      # 入库的记录
@@ -28,6 +34,20 @@ class CollectionResult(TypedDict):
     fx_source: str                         # "chinamoney" | "fallback"
     validation_status: str                 # valid | suspicious_xxx
     error: Optional[str]                   # 错误信息
+
+
+class FxCollectionResult(TypedDict):
+    """汇率采集任务执行结果"""
+    success: bool                          # 是否成功入库
+    date: str                              # 日期
+    record: Optional[ExchangeRateRecord]   # 入库的记录
+    source: str                            # 数据来源
+    currencies_collected: List[str]        # 成功采集的货币对
+    error: Optional[str]                   # 错误信息
+
+
+# 保持向后兼容的别名
+CollectionResult = GoldCollectionResult
 
 
 class DailySummary(TypedDict):
@@ -45,9 +65,9 @@ class DailySummary(TypedDict):
 # ======================
 # 核心业务函数
 # ======================
-def collect_and_save_daily_data(target_date: Optional[date] = None) -> CollectionResult:
+def collect_and_save_daily_data(target_date: Optional[date] = None) -> GoldCollectionResult:
     """
-    执行每日数据采集任务
+    执行每日黄金价格采集任务
     
     流程:
     1. 采集 LBMA 价格（必须成功）
@@ -60,14 +80,16 @@ def collect_and_save_daily_data(target_date: Optional[date] = None) -> Collectio
         target_date: 目标日期，默认为当天
     
     Returns:
-        CollectionResult: 采集结果详情
+        GoldCollectionResult: 采集结果详情
     """
     if target_date is None:
         target_date = date.today()
     date_str = target_date.isoformat()
     
+    logger.info(f"[黄金采集] 开始采集 {date_str} 的黄金价格数据")
+    
     # 初始化结果
-    result: CollectionResult = {
+    result: GoldCollectionResult = {
         "success": False,
         "date": date_str,
         "record": None,
@@ -79,34 +101,70 @@ def collect_and_save_daily_data(target_date: Optional[date] = None) -> Collectio
     }
     
     # 1. 采集 LBMA 价格（必须成功）
-    lbma_result = fetch_lbma_price(target_date)
+    try:
+        lbma_result = fetch_lbma_price(target_date)
+    except RequestException as e:
+        error_msg = f"LBMA 网络请求失败: {str(e)}"
+        logger.error(f"[黄金采集] {error_msg}")
+        result["error"] = error_msg
+        return result
+    except Exception as e:
+        error_msg = f"LBMA 数据解析失败: {str(e)}"
+        logger.error(f"[黄金采集] {error_msg}", exc_info=True)
+        result["error"] = error_msg
+        return result
+    
     if not lbma_result["success"]:
-        result["error"] = f"LBMA 采集失败: {lbma_result['error']}"
+        error_msg = f"LBMA 采集失败: {lbma_result['error']}"
+        logger.error(f"[黄金采集] {error_msg}")
+        result["error"] = error_msg
         return result
     
     lbma_price = lbma_result["price"]
     result["lbma_source"] = "goldapi"
+    logger.info(f"[黄金采集] LBMA 定盘价: ${lbma_price:.2f}/盎司")
     
     # 2. 采集 USD/CNY 汇率（必须成功）
-    fx_result = fetch_usd_cny_rate(target_date)
+    try:
+        fx_result = fetch_usd_cny_rate(target_date)
+    except RequestException as e:
+        error_msg = f"USD/CNY 网络请求失败: {str(e)}"
+        logger.error(f"[黄金采集] {error_msg}")
+        result["error"] = error_msg
+        return result
+    except Exception as e:
+        error_msg = f"USD/CNY 数据解析失败: {str(e)}"
+        logger.error(f"[黄金采集] {error_msg}", exc_info=True)
+        result["error"] = error_msg
+        return result
+    
     if not fx_result["success"]:
-        result["error"] = f"汇率采集失败: {fx_result['error']}"
+        error_msg = f"汇率采集失败: {fx_result['error']}"
+        logger.error(f"[黄金采集] {error_msg}")
+        result["error"] = error_msg
         return result
     
     usd_cny = fx_result["rate"]
     result["fx_source"] = "chinamoney"
+    logger.info(f"[黄金采集] USD/CNY 汇率: {usd_cny:.4f}")
     
     # 3. 采集 SGE 价格（可选）
-    sge_result = fetch_sge_price(target_date)
     sge_price: Optional[float] = None
     sge_available = False
     
-    if sge_result["success"] and sge_result.get("available", False):
-        sge_price = sge_result["price"]
-        sge_available = True
-        result["sge_source"] = "sge_api"
-    else:
+    try:
+        sge_result = fetch_sge_price(target_date)
+        if sge_result["success"] and sge_result.get("available", False):
+            sge_price = sge_result["price"]
+            sge_available = True
+            result["sge_source"] = "sge_api"
+            logger.info(f"[黄金采集] SGE Au99.99: ¥{sge_price:.2f}/克")
+        else:
+            result["sge_source"] = "unavailable"
+            logger.info(f"[黄金采集] SGE 无交易数据")
+    except Exception as e:
         result["sge_source"] = "unavailable"
+        logger.warning(f"[黄金采集] SGE 采集异常（不影响主流程）: {str(e)}")
     
     # 4. 执行数据校验
     validation = validate_daily_data(
@@ -115,8 +173,9 @@ def collect_and_save_daily_data(target_date: Optional[date] = None) -> Collectio
         sge_price=sge_price,
         date_str=date_str
     )
-    
     result["validation_status"] = validation["status"]
+    logger.info(f"[黄金采集] 理论进口金价: ¥{validation['theoretical_cny_per_gram']:.2f}/克")
+    logger.info(f"[黄金采集] 数据校验状态: {validation['status']}")
     
     # 5. 组装记录
     record: GoldPriceRecord = {
@@ -135,8 +194,79 @@ def collect_and_save_daily_data(target_date: Optional[date] = None) -> Collectio
         upsert_record(record)
         result["success"] = True
         result["record"] = record
+        logger.info(f"[黄金采集] 数据已存入数据库")
+    except SQLAlchemyError as e:
+        error_msg = f"数据库写入失败: {str(e)}"
+        logger.error(f"[黄金采集] {error_msg}", exc_info=True)
+        result["error"] = error_msg
     except Exception as e:
-        result["error"] = f"数据库写入失败: {str(e)}"
+        error_msg = f"未知异常: {str(e)}"
+        logger.error(f"[黄金采集] {error_msg}", exc_info=True)
+        result["error"] = error_msg
+    
+    return result
+
+
+def collect_and_save_exchange_rates(target_date: Optional[date] = None) -> FxCollectionResult:
+    """
+    执行每日汇率采集任务（独立任务）
+    
+    采集 USD/CNY、JPY/CNY、EUR/CNY 汇率并存入 daily_exchange_rates 表。
+    
+    Args:
+        target_date: 目标日期，默认为当天
+    
+    Returns:
+        FxCollectionResult: 采集结果详情
+    """
+    if target_date is None:
+        target_date = date.today()
+    date_str = target_date.isoformat()
+    
+    result: FxCollectionResult = {
+        "success": False,
+        "date": date_str,
+        "record": None,
+        "source": "",
+        "currencies_collected": [],
+        "error": None,
+    }
+    
+    try:
+        fx_result = fetch_multi_currency_rates(target_date)
+        
+        if not fx_result["success"]:
+            result["error"] = f"汇率采集失败: {'; '.join(fx_result.get('errors', []))}"
+            return result
+        
+        rates = fx_result["rates"]
+        result["source"] = fx_result["source"]
+        
+        # 记录成功采集的货币对
+        collected = []
+        for key in ["usd_cny", "jpy_cny", "eur_cny"]:
+            if rates.get(key) is not None:
+                collected.append(key.upper().replace("_", "/"))
+        result["currencies_collected"] = collected
+        
+        # 判断状态
+        status = "valid" if not fx_result.get("errors") else "partial"
+        
+        fx_record: ExchangeRateRecord = {
+            "date": date_str,
+            "usd_cny": rates.get("usd_cny"),
+            "jpy_cny": rates.get("jpy_cny"),
+            "eur_cny": rates.get("eur_cny"),
+            "source": fx_result["source"],
+            "status": status,
+        }
+        
+        upsert_exchange_rate(fx_record)
+        result["success"] = True
+        result["record"] = fx_record
+        
+    except Exception as e:
+        result["error"] = f"汇率采集异常: {str(e)}"
     
     return result
 
@@ -275,12 +405,20 @@ def is_data_exists(date_str: str) -> bool:
 # ======================
 # 便捷函数
 # ======================
-def run_daily_task() -> CollectionResult:
+def run_daily_task() -> GoldCollectionResult:
     """
-    运行每日采集任务（当天）
+    运行每日黄金采集任务（当天）
     便捷入口，供 main.py 或调度器调用
     """
     return collect_and_save_daily_data()
+
+
+def run_daily_fx_task() -> FxCollectionResult:
+    """
+    运行每日汇率采集任务（当天）
+    便捷入口，供调度器调用
+    """
+    return collect_and_save_exchange_rates()
 
 
 def print_daily_summary(date_str: Optional[str] = None) -> None:

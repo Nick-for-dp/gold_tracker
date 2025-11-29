@@ -4,7 +4,7 @@
 """
 import time
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import date
 import requests
 from bs4 import BeautifulSoup
@@ -80,10 +80,22 @@ def fetch_usd_cny_rate(target_date: Optional[date] = None) -> Dict[str, Any]:
     }
 
 
-def _fetch_from_chinamoney_api(date_str: str) -> Dict[str, Any]:
+def _fetch_from_chinamoney_api(date_str: str, currency: str = "USD/CNY") -> Dict[str, Any]:
     """
     通过中国货币网 API 获取汇率
-    API 地址: https://www.chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcsrHis498.do
+    
+    Args:
+        date_str: 日期字符串 YYYY-MM-DD
+        currency: 货币对，如 "USD/CNY", "JPY/CNY", "EUR/CNY"
+    
+    Returns:
+        {
+            "success": True/False,
+            "date": "YYYY-MM-DD",
+            "rate": float 或 None,
+            "currency": 货币对,
+            "error": 错误信息 或 None
+        }
     """
     api_url = "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcprHisNew.do"
     
@@ -98,7 +110,7 @@ def _fetch_from_chinamoney_api(date_str: str) -> Dict[str, Any]:
     params = {
         "startDate": date_str,
         "endDate": date_str,
-        "currency": "USD/CNY",
+        "currency": currency,
         "pageNum": 1,
         "pageSize": 1
     }
@@ -106,32 +118,61 @@ def _fetch_from_chinamoney_api(date_str: str) -> Dict[str, Any]:
     try:
         response = make_request(api_url, params=params, headers=headers)
         
-        if response.status_code == 200:
-            data = response.json()
-            # API 返回格式：
-            # {
-            #   "code": 0,
-            #   "data": {
-            #     "records": [{"values": ["2024-01-15", "7.1088", ...]}]
-            #   }
-            # }
-            records = data.get("data", {}).get("records", [])
-            if records and len(records) > 0:
-                values = records[0].get("values", [])
-                if len(values) >= 2:
-                    rate = float(values[1])
-                    return {
-                        "success": True,
-                        "date": date_str,
-                        "rate": rate,
-                        "error": None
-                    }
+        if response is None:
+            return {
+                "success": False,
+                "date": date_str,
+                "rate": None,
+                "currency": currency,
+                "error": "请求返回空响应"
+            }
+        
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "date": date_str,
+                "rate": None,
+                "currency": currency,
+                "error": f"HTTP {response.status_code}"
+            }
+        
+        data = response.json()
+        if data is None:
+            return {
+                "success": False,
+                "date": date_str,
+                "rate": None,
+                "currency": currency,
+                "error": "API 返回空数据"
+            }
+        
+        # API 返回格式：
+        # {
+        #   "code": 0,
+        #   "data": {
+        #     "records": [{"values": ["2024-01-15", "7.1088", ...]}]
+        #   }
+        # }
+        data_obj = data.get("data") or {}
+        records = data_obj.get("records", [])
+        if records and len(records) > 0:
+            values = records[0].get("values", [])
+            if len(values) >= 2:
+                rate = float(values[1])
+                return {
+                    "success": True,
+                    "date": date_str,
+                    "rate": rate,
+                    "currency": currency,
+                    "error": None
+                }
         
         return {
             "success": False,
             "date": date_str,
             "rate": None,
-            "error": "API 返回数据格式异常"
+            "currency": currency,
+            "error": f"API 无 {currency} 数据（可能为非交易日）"
         }
     
     except Exception as e:
@@ -139,6 +180,7 @@ def _fetch_from_chinamoney_api(date_str: str) -> Dict[str, Any]:
             "success": False,
             "date": date_str,
             "rate": None,
+            "currency": currency,
             "error": f"API 请求失败: {str(e)}"
         }
 
@@ -226,7 +268,64 @@ def _fetch_from_fallback(date_str: str) -> Dict[str, Any]:
         }
 
 
+def fetch_multi_currency_rates(
+    target_date: Optional[date] = None,
+    currencies: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """
+    批量获取多个货币对的汇率
+    
+    Args:
+        target_date: 目标日期，默认为当天
+        currencies: 货币对列表，默认 ["USD/CNY", "JPY/CNY", "EUR/CNY"]
+    
+    Returns:
+        {
+            "success": True/False,
+            "date": "YYYY-MM-DD",
+            "rates": {
+                "usd_cny": 7.1234,
+                "jpy_cny": 4.7890,  # 100日元对人民币
+                "eur_cny": 7.6543
+            },
+            "source": "chinamoney",
+            "errors": []  # 失败的货币对信息
+        }
+    """
+    if currencies is None:
+        currencies = ["USD/CNY", "JPY/CNY", "EUR/CNY"]
+    
+    if target_date is None:
+        target_date = date.today()
+    date_str = target_date.isoformat()
+    
+    rates = {}
+    errors = []
+    
+    for pair in currencies:
+        result = _fetch_from_chinamoney_api(date_str, currency=pair)
+        key = pair.lower().replace("/", "_")  # "USD/CNY" -> "usd_cny"
+        
+        if result["success"]:
+            rates[key] = result["rate"]
+        else:
+            errors.append(f"{pair}: {result['error']}")
+    
+    return {
+        "success": len(rates) > 0,
+        "date": date_str,
+        "rates": rates,
+        "source": "chinamoney",
+        "errors": errors
+    }
+
+
 if __name__ == "__main__":
     # 测试代码
+    print("=== 测试单币种获取 ===")
     result = fetch_usd_cny_rate()
-    print(f"汇率采集结果: {result}")
+    print(f"USD/CNY 汇率: {result}")
+    
+    print("\n=== 测试多币种获取 ===")
+    multi_result = fetch_multi_currency_rates()
+    print(f"多币种汇率: {multi_result}")

@@ -19,22 +19,24 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python main.py                 # 执行每日采集（默认）
-  python main.py --task daily    # 执行每日采集
+  python main.py                 # 执行每日黄金采集（默认）
+  python main.py --task daily    # 执行每日黄金采集
+  python main.py --task fx       # 执行每日汇率采集
   python main.py --task backup   # 执行数据库备份
   python main.py --task all      # 执行所有任务
 
 Windows 任务计划配置:
-  每日采集: 23:30 执行 python main.py --task daily
+  每日黄金采集: 23:30 执行 python main.py --task daily
+  每日汇率采集: 23:35 执行 python main.py --task fx
   每周备份: 周日 23:45 执行 python main.py --task backup
         """
     )
     
     parser.add_argument(
         "--task", "-t",
-        choices=["daily", "backup", "all"],
+        choices=["daily", "fx", "backup", "all"],
         default="daily",
-        help="任务类型: daily=每日采集, backup=数据库备份, all=全部 (默认: daily)"
+        help="任务类型: daily=黄金采集, fx=汇率采集, backup=数据库备份, all=全部 (默认: daily)"
     )
     
     parser.add_argument(

@@ -7,7 +7,10 @@
 - **多源数据采集**
   - LBMA 下午定盘价（通过 GoldAPI.io）
   - 上海黄金交易所 Au99.99 收盘价
-  - USD/CNY 中间价（中国货币网）
+  - 多币种汇率（中国货币网）
+    - USD/CNY 中间价
+    - JPY/CNY 中间价（100日元）
+    - EUR/CNY 中间价
 
 - **智能数据校验**
   - LBMA 价格动态校验（μ ± 3σ，支持冷启动）
@@ -35,15 +38,17 @@ gold_tracker/
 ├── data_sources/
 │   ├── lbma_api.py         # LBMA 价格采集
 │   ├── sge_scraper.py      # SGE 价格采集
-│   └── fx_fetcher.py       # 汇率采集
+│   └── fx_fetcher.py       # 汇率采集（多币种）
 ├── validator/
 │   └── dynamic_validator.py # 数据校验器
 ├── database/
-│   ├── session.py          # 数据库连接
-│   ├── repository.py       # 数据访问层
+│   ├── session.py          # 数据库连接（单例模式）
+│   ├── repository.py       # 黄金数据访问层
+│   ├── fx_repository.py    # 汇率数据访问层
 │   └── db_manager.py       # 业务逻辑层
 ├── model/
-│   └── gold_price.py       # 数据模型
+│   ├── gold_price.py       # 黄金价格模型
+│   └── exchange_rate.py    # 汇率数据模型
 ├── utils/
 │   ├── logger.py           # 日志工具
 │   └── backup_manager.py   # 备份管理
@@ -94,6 +99,7 @@ data_sources:
     product_code: "Au99.99"
   fx:
     primary_url: "https://www.chinamoney.com.cn/chinese/bkccpr/"
+    secondary_url: "https://www.chinamoney.com.cn/chinese/bkccpr/"
 
 network:
   retry_times: 3
@@ -104,11 +110,12 @@ network:
 ### 4. 运行
 
 ```bash
-# 执行每日采集（默认）
+# 执行每日黄金采集（默认）
 uv run python main.py
 
 # 指定任务类型
-uv run python main.py --task daily    # 每日采集
+uv run python main.py --task daily    # 黄金价格采集
+uv run python main.py --task fx       # 汇率采集
 uv run python main.py --task backup   # 数据库备份
 uv run python main.py --task all      # 全部任务
 
@@ -125,12 +132,13 @@ uv run python main.py --help
 
 | 任务 | 执行时间 | 命令 |
 |------|----------|------|
-| 每日采集 | 23:30 | `python main.py --task daily` |
+| 黄金采集 | 23:30 | `python main.py --task daily` |
+| 汇率采集 | 23:35 | `python main.py --task fx` |
 | 每周备份 | 周日 23:45 | `python main.py --task backup` |
 
 ## 数据说明
 
-### 采集字段
+### 黄金价格表 (daily_gold_prices)
 
 | 字段 | 说明 |
 |------|------|
@@ -140,6 +148,17 @@ uv run python main.py --help
 | `usd_cny` | USD/CNY 中间价 |
 | `theoretical_cny_per_gram` | 理论进口金价（人民币/克） |
 | `status` | 校验状态（valid / suspicious_xxx） |
+
+### 汇率表 (daily_exchange_rates)
+
+| 字段 | 说明 |
+|------|------|
+| `date` | 日期 |
+| `usd_cny` | USD/CNY 中间价 |
+| `jpy_cny` | 100JPY/CNY 中间价 |
+| `eur_cny` | EUR/CNY 中间价 |
+| `source` | 数据来源 |
+| `status` | 数据状态（valid / partial） |
 
 ### 理论进口金价计算
 

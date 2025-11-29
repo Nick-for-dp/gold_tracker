@@ -6,7 +6,7 @@ from typing import Callable, List, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
 
-from database import run_daily_task, CollectionResult
+from database import run_daily_task, run_daily_fx_task, CollectionResult, FxCollectionResult
 from utils.logger import logger
 from utils.backup_manager import backup_database
 
@@ -177,6 +177,56 @@ def run_daily_collection() -> TaskResult:
         )
 
 
+def run_fx_collection() -> TaskResult:
+    """
+    执行每日汇率采集任务
+    
+    采集 USD/CNY、JPY/CNY、EUR/CNY 汇率并存入数据库。
+    
+    Returns:
+        TaskResult: 任务执行结果
+    """
+    started_at = datetime.now()
+    
+    try:
+        result = run_daily_fx_task()
+        finished_at = datetime.now()
+        
+        if result["success"]:
+            return TaskResult(
+                success=True,
+                task_type="fx_collection",
+                message=f"汇率采集成功: {result['date']}, 货币: {result['currencies_collected']}",
+                started_at=started_at,
+                finished_at=finished_at,
+                details={
+                    "date": result["date"],
+                    "source": result["source"],
+                    "currencies_collected": result["currencies_collected"],
+                }
+            )
+        else:
+            return TaskResult(
+                success=False,
+                task_type="fx_collection",
+                message=f"汇率采集失败: {result['error']}",
+                started_at=started_at,
+                finished_at=finished_at,
+                details={"error": result["error"]}
+            )
+    
+    except Exception as e:
+        finished_at = datetime.now()
+        return TaskResult(
+            success=False,
+            task_type="fx_collection",
+            message=f"汇率采集异常: {str(e)}",
+            started_at=started_at,
+            finished_at=finished_at,
+            details={"exception": str(e)}
+        )
+
+
 def run_weekly_backup() -> TaskResult:
     """
     执行每周数据库备份任务
@@ -229,15 +279,19 @@ def execute_task(task_type: str) -> TaskResult:
     
     Args:
         task_type: 任务类型
-            - "daily": 每日采集
+            - "daily": 每日黄金采集
+            - "fx": 每日汇率采集
             - "backup": 数据库备份
             - "all": 执行所有任务
     
     Returns:
-        TaskResult: 任务执行结果（all 时返回最后一个任务的结果）
+        TaskResult: 任务执行结果（all 时返回综合结果）
     """
     if task_type == "daily":
         return run_daily_collection()
+    
+    elif task_type == "fx":
+        return run_fx_collection()
     
     elif task_type == "backup":
         return run_weekly_backup()
@@ -245,18 +299,20 @@ def execute_task(task_type: str) -> TaskResult:
     elif task_type == "all":
         # 依次执行所有任务
         daily_result = run_daily_collection()
+        fx_result = run_fx_collection()
         backup_result = run_weekly_backup()
         
         # 返回综合结果
-        all_success = daily_result.success and backup_result.success
+        all_success = daily_result.success and fx_result.success and backup_result.success
         return TaskResult(
             success=all_success,
             task_type="all",
-            message=f"daily: {daily_result.success}, backup: {backup_result.success}",
+            message=f"daily: {daily_result.success}, fx: {fx_result.success}, backup: {backup_result.success}",
             started_at=daily_result.started_at,
             finished_at=backup_result.finished_at,
             details={
                 "daily": daily_result.message,
+                "fx": fx_result.message,
                 "backup": backup_result.message,
             }
         )
