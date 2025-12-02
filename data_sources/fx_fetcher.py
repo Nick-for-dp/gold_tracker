@@ -2,82 +2,13 @@
 汇率采集器
 爬取中国外汇交易中心获取 USD/CNY 中间价
 """
-import time
-import re
 from typing import Optional, Dict, Any, List
-from datetime import date
-import requests
-from bs4 import BeautifulSoup
-
-from config import get_config
+from datetime import date, timedelta
+# DEBUG: 本地测试时取消注释以下三行
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_sources.base import make_request
-
-
-def fetch_usd_cny_rate(target_date: Optional[date] = None) -> Dict[str, Any]:
-    """
-    获取 USD/CNY 中间价
-    
-    Args:
-        target_date: 目标日期，默认为当天
-    
-    Returns:
-        {
-            "success": True/False,
-            "date": "YYYY-MM-DD",
-            "rate": float 或 None,
-            "error": 错误信息 或 None
-        }
-    """
-    config = get_config()
-    fx_config = config["data_sources"]["fx"]
-    
-    primary_url = fx_config["primary_url"]
-    
-    if target_date is None:
-        target_date = date.today()
-    date_str = target_date.isoformat()
-    
-    # 首先尝试中国货币网 API（更稳定）
-    # 注意：内部函数现在自己处理超时，不再需要传递 timeout
-    result = _fetch_from_chinamoney_api(date_str)
-    if result["success"]:
-        return result
-    
-    # 备用：爬取页面
-    last_error = result.get("error", "API 获取失败")
-    
-    headers = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    }
-    
-    try:
-        response = make_request(primary_url, headers=headers)
-        response.encoding = 'utf-8'
-        
-        if response.status_code == 200:
-            result = _parse_chinamoney_page(response.text, date_str)
-            if result["success"]:
-                return result
-            else:
-                last_error = result.get("error", "解析失败")
-        else:
-            last_error = f"HTTP {response.status_code}"
-            
-    except Exception as e:
-        last_error = f"请求异常: {str(e)}"
-    
-    # 主源失败，尝试备用源
-    fallback_result = _fetch_from_fallback(date_str)
-    if fallback_result["success"]:
-        return fallback_result
-    
-    return {
-        "success": False,
-        "date": date_str,
-        "rate": None,
-        "error": f"所有数据源均失败: {last_error}"
-    }
 
 
 def _fetch_from_chinamoney_api(date_str: str, currency: str = "USD/CNY") -> Dict[str, Any]:
@@ -101,13 +32,20 @@ def _fetch_from_chinamoney_api(date_str: str, currency: str = "USD/CNY") -> Dict
     
     headers = {
         "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Origin": "https://www.chinamoney.com.cn",
         "Referer": "https://www.chinamoney.com.cn/chinese/bkccpr/",
-        "X-Requested-With": "XMLHttpRequest"
+        "X-Requested-With": "XMLHttpRequest",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
     }
     
-    # 请求参数
-    params = {
+    # 请求参数 (POST form data)
+    form_data = {
         "startDate": date_str,
         "endDate": date_str,
         "currency": currency,
@@ -116,7 +54,7 @@ def _fetch_from_chinamoney_api(date_str: str, currency: str = "USD/CNY") -> Dict
     }
     
     try:
-        response = make_request(api_url, params=params, headers=headers)
+        response = make_request(api_url, method="POST", data=form_data, headers=headers)
         
         if response is None:
             return {
@@ -150,23 +88,50 @@ def _fetch_from_chinamoney_api(date_str: str, currency: str = "USD/CNY") -> Dict
         # {
         #   "code": 0,
         #   "data": {
-        #     "records": [{"values": ["2024-01-15", "7.1088", ...]}]
-        #   }
+        #     "head": ["USD/CNY", "EUR/CNY", ...],
+        #     "searchlist": ["USD/CNY", "EUR/CNY", ...],
+        #   },
+        #    "records": [{"date": "2025-12-01", "values": ["7.1088", ...]}]
         # }
-        data_obj = data.get("data") or {}
-        records = data_obj.get("records", [])
-        if records and len(records) > 0:
-            values = records[0].get("values", [])
-            if len(values) >= 2:
-                rate = float(values[1])
-                return {
-                    "success": True,
-                    "date": date_str,
-                    "rate": rate,
-                    "currency": currency,
-                    "error": None
-                }
+
+        records = data.get("records", [])
+        if not records:
+            return {
+                "success": False,
+                "date": date_str,
+                "rate": None,
+                "currency": currency,
+                "error": "API 返回记录为空"
+            }
+
+        # 获取数据日期
+        today_fx_obj = records[0]
+        fx_date = today_fx_obj.get("date", "")
         
+        if fx_date != date_str:
+            return {
+                "success": False,
+                "date": date_str,
+                "rate": None,
+                "currency": currency,
+                "error": f"日期不匹配 (API返回: {fx_date})"
+            }
+
+        # 构建汇率映射字典 {币种: 汇率}
+        data_obj = data.get("data", {})
+        currency_list = data_obj.get("searchlist", [])
+        fx_values = today_fx_obj.get("values", [])
+        rate_map = dict(zip(currency_list, fx_values))
+        
+        if currency in rate_map:
+            return {
+                "success": True,
+                "date": date_str,
+                "rate": round(float(rate_map[currency]), 3),
+                "currency": currency,
+                "error": None
+            }
+
         return {
             "success": False,
             "date": date_str,
@@ -185,87 +150,48 @@ def _fetch_from_chinamoney_api(date_str: str, currency: str = "USD/CNY") -> Dict
         }
 
 
-def _parse_chinamoney_page(html: str, date_str: str) -> Dict[str, Any]:
+def fetch_usd_cny_rate(target_date: Optional[date] = None) -> Dict[str, Any]:
     """
-    解析中国货币网页面，提取 USD/CNY 中间价
+    获取 USD/CNY 中间价
+    
+    Args:
+        target_date: 目标日期，默认为当天
+    
+    Returns:
+        {
+            "success": True/False,
+            "date": "YYYY-MM-DD",
+            "rate": float 或 None,
+            "error": 错误信息 或 None
+        }
     """
-    try:
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        # 查找包含 USD/CNY 的表格行
-        tables = soup.find_all('table')
-        
-        for table in tables:
-            rows = table.find_all('tr')
-            for row in rows:
-                row_text = row.get_text()
-                if 'USD' in row_text and 'CNY' in row_text:
-                    cells = row.find_all(['td', 'th'])
-                    for cell in cells:
-                        cell_text = cell.get_text().strip()
-                        # 汇率格式：7.xxxx
-                        if re.match(r'^[67]\.\d{4}$', cell_text):
-                            return {
-                                "success": True,
-                                "date": date_str,
-                                "rate": float(cell_text),
-                                "error": None
-                            }
-        
+    # 默认使用当天日期
+    if target_date is None:
+        target_date = date.today()
+    date_str = target_date.isoformat()
+    
+    # 1. 尝试使用通用接口获取
+    result = fetch_multi_currency_rates(target_date, currencies=["USD/CNY"])
+    
+    if result["success"] and "usd_cny" in result["rates"]:
         return {
-            "success": False,
-            "date": date_str,
-            "rate": None,
-            "error": "未找到 USD/CNY 汇率数据"
+            "success": True,
+            "date": result["date"],
+            "rate": result["rates"]["usd_cny"],
+            "error": None
         }
     
-    except Exception as e:
-        return {
-            "success": False,
-            "date": date_str,
-            "rate": None,
-            "error": f"页面解析错误: {str(e)}"
-        }
-
-
-def _fetch_from_fallback(date_str: str) -> Dict[str, Any]:
-    """
-    备用方案：通过免费汇率 API 获取
-    使用 exchangerate-api.com 或类似服务
-    """
-    # 备用 API（无需 key 的免费服务）
-    url = "https://api.exchangerate-api.com/v4/latest/USD"
+    # 2. 获取失败，提取错误信息
+    last_error = "未获取到数据"
+    if result["errors"]:
+        last_error = "; ".join(result["errors"])
     
-    try:
-        response = make_request(url)
-        
-        if response.status_code == 200:
-            data = response.json()
-            rates = data.get("rates", {})
-            cny_rate = rates.get("CNY")
-            
-            if cny_rate:
-                return {
-                    "success": True,
-                    "date": date_str,
-                    "rate": float(cny_rate),
-                    "error": None
-                }
-        
-        return {
-            "success": False,
-            "date": date_str,
-            "rate": None,
-            "error": "备用 API 无数据"
-        }
-    
-    except Exception as e:
-        return {
-            "success": False,
-            "date": date_str,
-            "rate": None,
-            "error": f"备用 API 请求失败: {str(e)}"
-        }
+    return {
+        "success": False,
+        "date": date_str,
+        "rate": None,
+        "error": f"获取失败: {last_error}"
+    }
 
 
 def fetch_multi_currency_rates(
@@ -292,9 +218,10 @@ def fetch_multi_currency_rates(
             "errors": []  # 失败的货币对信息
         }
     """
+    # 默认货币对列表
     if currencies is None:
-        currencies = ["USD/CNY", "JPY/CNY", "EUR/CNY"]
-    
+        currencies = ["USD/CNY", "100JPY/CNY", "EUR/CNY"]
+    # 默认使用当天日期
     if target_date is None:
         target_date = date.today()
     date_str = target_date.isoformat()
@@ -304,7 +231,10 @@ def fetch_multi_currency_rates(
     
     for pair in currencies:
         result = _fetch_from_chinamoney_api(date_str, currency=pair)
-        key = pair.lower().replace("/", "_")  # "USD/CNY" -> "usd_cny"
+        if pair == "100JPY/CNY":
+            key = "jpy_cny"
+        else:
+            key = pair.lower().replace("/", "_")  # "USD/CNY" -> "usd_cny"
         
         if result["success"]:
             rates[key] = result["rate"]
@@ -326,6 +256,6 @@ if __name__ == "__main__":
     result = fetch_usd_cny_rate()
     print(f"USD/CNY 汇率: {result}")
     
-    print("\n=== 测试多币种获取 ===")
+    # print("\n=== 测试多币种获取 ===")
     multi_result = fetch_multi_currency_rates()
     print(f"多币种汇率: {multi_result}")
