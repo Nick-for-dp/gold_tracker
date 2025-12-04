@@ -193,10 +193,12 @@ def run_fx_collection() -> TaskResult:
         finished_at = datetime.now()
         
         if result["success"]:
+            msg = f"汇率采集成功: {result['date']}, 货币: {result['currencies_collected']}"
+            logger.info(msg)
             return TaskResult(
                 success=True,
                 task_type="fx_collection",
-                message=f"汇率采集成功: {result['date']}, 货币: {result['currencies_collected']}",
+                message=msg,
                 started_at=started_at,
                 finished_at=finished_at,
                 details={
@@ -206,10 +208,12 @@ def run_fx_collection() -> TaskResult:
                 }
             )
         else:
+            msg = f"汇率采集失败: {result['error']}"
+            logger.error(msg)
             return TaskResult(
                 success=False,
                 task_type="fx_collection",
-                message=f"汇率采集失败: {result['error']}",
+                message=msg,
                 started_at=started_at,
                 finished_at=finished_at,
                 details={"error": result["error"]}

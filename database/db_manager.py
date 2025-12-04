@@ -242,6 +242,8 @@ def collect_and_save_exchange_rates(target_date: Optional[date] = None) -> FxCol
         target_date = date.today()
     date_str = target_date.isoformat()
     
+    logger.info(f"[汇率采集] 开始采集 {date_str} 的汇率数据")
+    
     result: FxCollectionResult = {
         "success": False,
         "date": date_str,
@@ -255,18 +257,26 @@ def collect_and_save_exchange_rates(target_date: Optional[date] = None) -> FxCol
         fx_result = fetch_multi_currency_rates(target_date)
         
         if not fx_result["success"]:
-            result["error"] = f"汇率采集失败: {'; '.join(fx_result.get('errors', []))}"
+            error_msg = f"汇率采集失败: {'; '.join(fx_result.get('errors', []))}"
+            logger.error(f"[汇率采集] {error_msg}")
+            result["error"] = error_msg
             return result
         
         rates = fx_result["rates"]
         result["source"] = fx_result["source"]
         
-        # 记录成功采集的货币对
+        # 记录成功采集的货币对和汇率值
         collected = []
+        collected_details = []
         for key in ["usd_cny", "jpy_cny", "eur_cny"]:
-            if rates.get(key) is not None:
-                collected.append(key.upper().replace("_", "/"))
+            val = rates.get(key)
+            if val is not None:
+                currency_pair = key.upper().replace("_", "/")
+                collected.append(currency_pair)
+                collected_details.append(f"{currency_pair}={val:.4f}")
+                
         result["currencies_collected"] = collected
+        logger.info(f"[汇率采集] 成功采集: {', '.join(collected_details)} (来源: {fx_result['source']})")
         
         # 判断状态
         status = "valid" if not fx_result.get("errors") else "partial"
@@ -281,11 +291,15 @@ def collect_and_save_exchange_rates(target_date: Optional[date] = None) -> FxCol
         }
         
         upsert_exchange_rate(fx_record)
+        logger.info(f"[汇率采集] 数据已存入数据库")
+        
         result["success"] = True
         result["record"] = fx_record
         
     except Exception as e:
-        result["error"] = f"汇率采集异常: {str(e)}"
+        error_msg = f"汇率采集异常: {str(e)}"
+        logger.error(f"[汇率采集] {error_msg}", exc_info=True)
+        result["error"] = error_msg
     
     return result
 

@@ -24,3 +24,6 @@ backups/
 # Database
 data/
 *.db
+
+# .bat
+*.bat
