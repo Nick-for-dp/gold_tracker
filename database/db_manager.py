@@ -7,7 +7,7 @@ from datetime import date, datetime
 from requests.exceptions import RequestException
 from sqlalchemy.exc import SQLAlchemyError
 
-from data_sources import fetch_lbma_price, fetch_sge_price, fetch_usd_cny_rate, fetch_multi_currency_rates
+from data_sources import fetch_lbma_price, fetch_sge_price, fetch_multi_currency_rates
 from utils.logger import logger
 from validator import validate_daily_data, calculate_theoretical_price
 from database.repository import (
@@ -128,22 +128,20 @@ def collect_and_save_daily_data(target_date: Optional[date] = None) -> GoldColle
     result["lbma_source"] = "goldapi"
     logger.info(f"[黄金采集] LBMA 定盘价: ${lbma_price:.2f}/盎司")
     
-    # 2. 采集 USD/CNY 汇率（必须成功，否则回退到最近一个交易日）
+    # 2. 获取 USD/CNY 汇率（从数据库读取，若无则回退到最近交易日）
     usd_cny: Optional[float] = None
     fx_source = ""
     
     try:
-        fx_result = fetch_usd_cny_rate(target_date)
-        if fx_result["success"]:
-            usd_cny = fx_result["rate"]
-            fx_source = "chinamoney"
-            logger.info(f"[黄金采集] USD/CNY 汇率: {usd_cny:.4f}")
+        fx_record = get_exchange_rate_by_date(date_str)
+        if fx_record and fx_record.get("usd_cny") is not None:
+            usd_cny = fx_record["usd_cny"]
+            fx_source = "database"
+            logger.info(f"[黄金采集] 从数据库读取 USD/CNY 汇率: {usd_cny:.4f}")
         else:
-            logger.warning(f"[黄金采集] 当日汇率获取失败: {fx_result['error']}")
-    except RequestException as e:
-        logger.warning(f"[黄金采集] USD/CNY 网络请求失败: {str(e)}")
+            logger.warning(f"[黄金采集] 数据库中未找到 {date_str} 的汇率数据")
     except Exception as e:
-        logger.warning(f"[黄金采集] USD/CNY 数据解析失败: {str(e)}")
+        logger.warning(f"[黄金采集] 读取汇率数据异常: {str(e)}")
     
     # 如果当日汇率获取失败，回退到最近一个交易日的汇率
     if usd_cny is None:
