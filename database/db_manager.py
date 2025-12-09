@@ -436,20 +436,26 @@ def is_data_exists(date_str: str) -> bool:
 # ======================
 # 便捷函数
 # ======================
-def run_daily_task() -> GoldCollectionResult:
+def run_daily_task(target_date: Optional[date] = None) -> GoldCollectionResult:
     """
-    运行每日黄金采集任务（当天）
+    运行每日黄金采集任务
     便捷入口，供 main.py 或调度器调用
+    
+    Args:
+        target_date: 目标日期，默认为当天
     """
-    return collect_and_save_daily_data()
+    return collect_and_save_daily_data(target_date)
 
 
-def run_daily_fx_task() -> FxCollectionResult:
+def run_daily_fx_task(target_date: Optional[date] = None) -> FxCollectionResult:
     """
-    运行每日汇率采集任务（当天）
+    运行每日汇率采集任务
     便捷入口，供调度器调用
+    
+    Args:
+        target_date: 目标日期，默认为当天
     """
-    return collect_and_save_exchange_rates()
+    return collect_and_save_exchange_rates(target_date)
 
 
 def print_daily_summary(date_str: Optional[str] = None) -> None:

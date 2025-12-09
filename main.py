@@ -4,7 +4,7 @@ Gold Tracker - 黄金价格追踪系统
 """
 import sys
 import argparse
-from datetime import datetime
+from datetime import datetime, date
 
 from database import init_database
 from core import execute_task, TaskResult
@@ -24,6 +24,10 @@ def parse_args() -> argparse.Namespace:
   python main.py --task fx       # 执行每日汇率采集
   python main.py --task backup   # 执行数据库备份
   python main.py --task all      # 执行所有任务
+  
+  # 补录历史数据
+  python main.py --task daily --date 2023-01-01  # 补录指定日期的金价
+  python main.py --task fx --date 2023-01-01     # 补录指定日期的汇率
 
 Windows 任务计划配置:
   每日黄金采集: 23:30 执行 python main.py --task daily
@@ -37,6 +41,11 @@ Windows 任务计划配置:
         choices=["daily", "fx", "backup", "all"],
         default="daily",
         help="任务类型: daily=黄金采集, fx=汇率采集, backup=数据库备份, all=全部 (默认: daily)"
+    )
+    
+    parser.add_argument(
+        "--date", "-d",
+        help="指定日期 (格式: YYYY-MM-DD)，用于补录历史数据。默认使用今天。"
     )
     
     parser.add_argument(
@@ -100,7 +109,18 @@ def main() -> int:
         print_banner()
         print(f"⏰ 启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"📋 任务类型: {args.task}")
+        if args.date:
+            print(f"📅 目标日期: {args.date}")
         print()
+    
+    # 解析日期参数
+    target_date = None
+    if args.date:
+        try:
+            target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        except ValueError:
+            print(f"❌ 日期格式错误: {args.date}，请使用 YYYY-MM-DD 格式")
+            return 1
     
     # 1. 初始化数据库
     try:
@@ -111,7 +131,7 @@ def main() -> int:
     
     # 2. 执行任务
     try:
-        result = execute_task(args.task)
+        result = execute_task(args.task, target_date)
     except Exception as e:
         logger.critical(f"任务执行异常: {e}", exc_info=True)
         print(f"❌ 任务执行异常: {e}")

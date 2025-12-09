@@ -3,7 +3,7 @@
 封装调度逻辑，支持后置处理器扩展
 """
 from typing import Callable, List, Optional
-from datetime import datetime
+from datetime import datetime, date
 from dataclasses import dataclass, field
 
 from database import run_daily_task, run_daily_fx_task, CollectionResult, FxCollectionResult
@@ -116,7 +116,7 @@ def _run_post_processors(result: CollectionResult) -> None:
 # ======================
 # 任务执行函数
 # ======================
-def run_daily_collection() -> TaskResult:
+def run_daily_collection(target_date: Optional[date] = None) -> TaskResult:
     """
     执行每日数据采集任务
     
@@ -126,6 +126,9 @@ def run_daily_collection() -> TaskResult:
     3. 执行后置处理器
     4. 返回任务结果
     
+    Args:
+        target_date: 目标日期，默认为当天
+    
     Returns:
         TaskResult: 任务执行结果
     """
@@ -133,7 +136,7 @@ def run_daily_collection() -> TaskResult:
     
     try:
         # 执行采集
-        result = run_daily_task()
+        result = run_daily_task(target_date)
         
         # 执行后置处理器
         _run_post_processors(result)
@@ -177,11 +180,14 @@ def run_daily_collection() -> TaskResult:
         )
 
 
-def run_fx_collection() -> TaskResult:
+def run_fx_collection(target_date: Optional[date] = None) -> TaskResult:
     """
     执行每日汇率采集任务
     
     采集 USD/CNY、JPY/CNY、EUR/CNY 汇率并存入数据库。
+    
+    Args:
+        target_date: 目标日期，默认为当天
     
     Returns:
         TaskResult: 任务执行结果
@@ -189,7 +195,7 @@ def run_fx_collection() -> TaskResult:
     started_at = datetime.now()
     
     try:
-        result = run_daily_fx_task()
+        result = run_daily_fx_task(target_date)
         finished_at = datetime.now()
         
         if result["success"]:
@@ -277,7 +283,7 @@ def run_weekly_backup() -> TaskResult:
         )
 
 
-def execute_task(task_type: str) -> TaskResult:
+def execute_task(task_type: str, target_date: Optional[date] = None) -> TaskResult:
     """
     统一任务执行入口
     
@@ -287,23 +293,24 @@ def execute_task(task_type: str) -> TaskResult:
             - "fx": 每日汇率采集
             - "backup": 数据库备份
             - "all": 执行所有任务
+        target_date: 目标日期 (仅对 daily 和 fx 任务有效)
     
     Returns:
         TaskResult: 任务执行结果（all 时返回综合结果）
     """
     if task_type == "daily":
-        return run_daily_collection()
+        return run_daily_collection(target_date)
     
     elif task_type == "fx":
-        return run_fx_collection()
+        return run_fx_collection(target_date)
     
     elif task_type == "backup":
         return run_weekly_backup()
     
     elif task_type == "all":
         # 依次执行所有任务
-        daily_result = run_daily_collection()
-        fx_result = run_fx_collection()
+        daily_result = run_daily_collection(target_date)
+        fx_result = run_fx_collection(target_date)
         backup_result = run_weekly_backup()
         
         # 返回综合结果
