@@ -1,25 +1,41 @@
 """
-LBMA 黄金价格采集器
+LBMA 贵金属价格采集器
 通过 GoldAPI.io 获取 LBMA 下午定盘价（美元/盎司）
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 from datetime import date
 
 from config import get_config
 from data_sources.base import make_request
 
 
-def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
+# 支持的贵金属品类
+MetalType = Literal["XAU", "XAG", "XPT", "XPD"]
+
+METAL_NAMES = {
+    "XAU": "黄金",
+    "XAG": "白银",
+    "XPT": "铂金",
+    "XPD": "钯金",
+}
+
+
+def fetch_lbma_price(
+    target_date: Optional[date] = None,
+    metal: MetalType = "XAU"
+) -> Dict[str, Any]:
     """
     获取 LBMA 下午定盘价
     
     Args:
         target_date: 目标日期，默认为当天
+        metal: 贵金属品类，支持 XAU(黄金)、XAG(白银)、XPT(铂金)、XPD(钯金)，默认为 XAU
     
     Returns:
         {
             "success": True/False,
             "date": "YYYY-MM-DD",
+            "metal": "XAU/XAG/XPT/XPD",
             "price": float (美元/盎司) 或 None,
             "error": 错误信息 或 None
         }
@@ -34,12 +50,24 @@ def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
         target_date = date.today()
     date_str = target_date.isoformat()
     
+    # 验证金属品类
+    if metal not in METAL_NAMES:
+        return {
+            "success": False,
+            "date": date_str,
+            "metal": metal,
+            "price": None,
+            "error": f"不支持的金属品类: {metal}，支持: {', '.join(METAL_NAMES.keys())}"
+        }
+    
+    metal_name = METAL_NAMES[metal]
+    
     # API 请求 URL
-    # GoldAPI 格式: /XAU/USD/YYYYMMDD 获取历史数据，或 /XAU/USD 获取最新数据
+    # GoldAPI 格式: /{METAL}/USD/YYYYMMDD 获取历史数据，或 /{METAL}/USD 获取最新数据
     if target_date == date.today():
-        url = f"{base_url}/XAU/USD"
+        url = f"{base_url}/{metal}/USD"
     else:
-        url = f"{base_url}/XAU/USD/{target_date.strftime('%Y%m%d')}"
+        url = f"{base_url}/{metal}/USD/{target_date.strftime('%Y%m%d')}"
     
     headers = {
         "x-access-token": api_key,
@@ -65,6 +93,7 @@ def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
                 return {
                     "success": True,
                     "date": date_str,
+                    "metal": metal,
                     "price": float(price),
                     "error": None
                 }
@@ -72,6 +101,7 @@ def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
                 return {
                     "success": False,
                     "date": date_str,
+                    "metal": metal,
                     "price": None,
                     "error": "API 返回数据中无 price 字段"
                 }
@@ -80,6 +110,7 @@ def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
             return {
                 "success": False,
                 "date": date_str,
+                "metal": metal,
                 "price": None,
                 "error": "API Key 无效或已过期"
             }
@@ -88,14 +119,16 @@ def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
             return {
                 "success": False,
                 "date": date_str,
+                "metal": metal,
                 "price": None,
-                "error": f"未找到 {date_str} 的 LBMA 数据（可能为非交易日）"
+                "error": f"未找到 {date_str} 的 {metal_name} LBMA 数据（可能为非交易日）"
             }
         
         elif response.status_code == 429:
             return {
                 "success": False,
                 "date": date_str,
+                "metal": metal,
                 "price": None,
                 "error": "API 请求次数超限"
             }
@@ -104,6 +137,7 @@ def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
             return {
                 "success": False,
                 "date": date_str,
+                "metal": metal,
                 "price": None,
                 "error": f"HTTP {response.status_code}: {response.text[:200]}"
             }
@@ -112,6 +146,7 @@ def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
         return {
             "success": False,
             "date": date_str,
+            "metal": metal,
             "price": None,
             "error": f"请求异常: {str(e)}"
         }
@@ -119,5 +154,10 @@ def fetch_lbma_price(target_date: Optional[date] = None) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     # 测试代码
+    print("=== 黄金价格 ===")
     result = fetch_lbma_price()
+    print(f"LBMA 采集结果: {result}")
+    
+    print("\n=== 白银价格 ===")
+    result = fetch_lbma_price(metal="XAG")
     print(f"LBMA 采集结果: {result}")

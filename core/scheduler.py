@@ -6,7 +6,7 @@ from typing import Callable, List, Optional
 from datetime import datetime, date
 from dataclasses import dataclass, field
 
-from database import run_daily_task, run_daily_fx_task, CollectionResult, FxCollectionResult
+from database import run_daily_task, run_daily_fx_task, run_daily_silver_task, CollectionResult, FxCollectionResult, SilverCollectionResult
 from utils.logger import logger
 from utils.backup_manager import backup_database
 
@@ -237,6 +237,82 @@ def run_fx_collection(target_date: Optional[date] = None) -> TaskResult:
         )
 
 
+def run_silver_collection(target_date: Optional[date] = None) -> TaskResult:
+    """
+    执行每日白银数据采集任务
+    
+    Args:
+        target_date: 目标日期，默认为当天
+    
+    Returns:
+        TaskResult: 任务执行结果
+    """
+    started_at = datetime.now()
+    
+    try:
+        result = run_daily_silver_task(target_date)
+        finished_at = datetime.now()
+        
+        if result["success"]:
+            msg = f"白银采集成功: {result['date']}, 状态: {result['validation_status']}"
+            logger.info(msg)
+            
+            # 打印白银数据摘要
+            if result["record"]:
+                record = result["record"]
+                print(f"\n🥈 {record['date']} 白银价格数据")
+                print("=" * 40)
+                print(f"  LBMA 定盘价:    ${record['lbma_pm_usd']:.2f}/盎司")
+                print(f"  USD/CNY 汇率:   {record['usd_cny']:.4f}")
+                print(f"  理论进口银价:   ¥{record['theoretical_cny_per_gram']:.4f}/克")
+                if record["sge_close_cny"] is not None:
+                    print(f"  SGE Ag99.99:    ¥{record['sge_close_cny']:.4f}/克")
+                    if record["theoretical_cny_per_gram"] > 0:
+                        premium = (record["sge_close_cny"] / record["theoretical_cny_per_gram"] - 1) * 100
+                        print(f"  SGE 溢价率:     {premium:+.2f}%")
+                else:
+                    print(f"  SGE Ag99.99:    无交易")
+                print(f"  数据状态:       {record['status']}")
+                print("=" * 40)
+            
+            return TaskResult(
+                success=True,
+                task_type="silver_collection",
+                message=msg,
+                started_at=started_at,
+                finished_at=finished_at,
+                details={
+                    "date": result["date"],
+                    "validation_status": result["validation_status"],
+                    "lbma_source": result["lbma_source"],
+                    "sge_source": result["sge_source"],
+                    "fx_source": result["fx_source"],
+                }
+            )
+        else:
+            msg = f"白银采集失败: {result['error']}"
+            logger.error(msg)
+            return TaskResult(
+                success=False,
+                task_type="silver_collection",
+                message=msg,
+                started_at=started_at,
+                finished_at=finished_at,
+                details={"error": result["error"]}
+            )
+    
+    except Exception as e:
+        finished_at = datetime.now()
+        return TaskResult(
+            success=False,
+            task_type="silver_collection",
+            message=f"白银采集异常: {str(e)}",
+            started_at=started_at,
+            finished_at=finished_at,
+            details={"exception": str(e)}
+        )
+
+
 def run_weekly_backup() -> TaskResult:
     """
     执行每周数据库备份任务
@@ -290,16 +366,20 @@ def execute_task(task_type: str, target_date: Optional[date] = None) -> TaskResu
     Args:
         task_type: 任务类型
             - "daily": 每日黄金采集
+            - "silver": 每日白银采集
             - "fx": 每日汇率采集
             - "backup": 数据库备份
             - "all": 执行所有任务
-        target_date: 目标日期 (仅对 daily 和 fx 任务有效)
+        target_date: 目标日期 (仅对 daily、silver 和 fx 任务有效)
     
     Returns:
         TaskResult: 任务执行结果（all 时返回综合结果）
     """
     if task_type == "daily":
         return run_daily_collection(target_date)
+    
+    elif task_type == "silver":
+        return run_silver_collection(target_date)
     
     elif task_type == "fx":
         return run_fx_collection(target_date)
@@ -310,19 +390,21 @@ def execute_task(task_type: str, target_date: Optional[date] = None) -> TaskResu
     elif task_type == "all":
         # 依次执行所有任务
         daily_result = run_daily_collection(target_date)
+        silver_result = run_silver_collection(target_date)
         fx_result = run_fx_collection(target_date)
         backup_result = run_weekly_backup()
         
         # 返回综合结果
-        all_success = daily_result.success and fx_result.success and backup_result.success
+        all_success = daily_result.success and silver_result.success and fx_result.success and backup_result.success
         return TaskResult(
             success=all_success,
             task_type="all",
-            message=f"daily: {daily_result.success}, fx: {fx_result.success}, backup: {backup_result.success}",
+            message=f"daily: {daily_result.success}, silver: {silver_result.success}, fx: {fx_result.success}, backup: {backup_result.success}",
             started_at=daily_result.started_at,
             finished_at=backup_result.finished_at,
             details={
                 "daily": daily_result.message,
+                "silver": silver_result.message,
                 "fx": fx_result.message,
                 "backup": backup_result.message,
             }

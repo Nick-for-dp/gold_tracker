@@ -1,12 +1,17 @@
-# Gold Tracker - 黄金价格追踪系统
+# Gold Tracker - 贵金属价格追踪系统
 
-一个轻量级、自动化、本地部署的黄金价格数据采集与存储系统，用于长期追踪国际与国内黄金价格及关键汇率。
+一个轻量级、自动化、本地部署的贵金属价格数据采集与存储系统，用于长期追踪国际与国内黄金、白银价格及关键汇率。
 
 ## 功能特性
 
 - **多源数据采集**
-  - LBMA 下午定盘价（通过 GoldAPI.io）
-  - 上海黄金交易所 Au99.99 收盘价
+  - LBMA 贵金属定盘价（通过 GoldAPI.io）
+    - 黄金 (XAU)
+    - 白银 (XAG)
+    - 铂金 (XPT)、钯金 (XPD) 等
+  - 上海黄金交易所收盘价
+    - Au99.99 黄金
+    - Ag99.99 白银
   - 多币种汇率（中国货币网）
     - USD/CNY 中间价
     - JPY/CNY 中间价（100日元）
@@ -44,10 +49,12 @@ gold_tracker/
 ├── database/
 │   ├── session.py          # 数据库连接（单例模式）
 │   ├── repository.py       # 黄金数据访问层
+│   ├── silver_repository.py # 白银数据访问层
 │   ├── fx_repository.py    # 汇率数据访问层
 │   └── db_manager.py       # 业务逻辑层
 ├── model/
 │   ├── gold_price.py       # 黄金价格模型
+│   ├── silver_price.py     # 白银价格模型
 │   └── exchange_rate.py    # 汇率数据模型
 ├── utils/
 │   ├── logger.py           # 日志工具
@@ -115,6 +122,7 @@ uv run python main.py
 
 # 指定任务类型
 uv run python main.py --task daily    # 黄金价格采集
+uv run python main.py --task silver   # 白银价格采集
 uv run python main.py --task fx       # 汇率采集
 uv run python main.py --task backup   # 数据库备份
 uv run python main.py --task all      # 全部任务
@@ -133,6 +141,7 @@ uv run python main.py --help
 | 任务 | 执行时间 | 命令 |
 |------|----------|------|
 | 黄金采集 | 23:30 | `python main.py --task daily` |
+| 白银采集 | 23:32 | `python main.py --task silver` |
 | 汇率采集 | 23:35 | `python main.py --task fx` |
 | 每周备份 | 周日 23:45 | `python main.py --task backup` |
 
@@ -160,11 +169,26 @@ uv run python main.py --help
 | `source` | 数据来源 |
 | `status` | 数据状态（valid / partial） |
 
-### 理论进口金价计算
+### 白银价格表 (daily_silver_prices)
+
+| 字段 | 说明 |
+|------|------|
+| `date` | 日期 |
+| `lbma_pm_usd` | LBMA 白银定盘价（美元/盎司） |
+| `sge_close_cny` | SGE Ag99.99 收盘价（人民币/克） |
+| `usd_cny` | USD/CNY 中间价 |
+| `theoretical_cny_per_gram` | 理论进口银价（人民币/克） |
+| `status` | 校验状态（valid / suspicious_xxx） |
+
+> 注：SGE Ag99.99 原始报价单位为人民币/千克，系统自动转换为人民币/克存储。
+
+### 理论进口价计算
 
 ```
 理论价 = (LBMA价格 × USD/CNY汇率) / 31.1035
 ```
+
+此公式适用于黄金和白银。
 
 ## 扩展开发
 

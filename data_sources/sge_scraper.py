@@ -1,6 +1,6 @@
 """
-SGE 黄金价格采集器
-通过上海黄金交易所官网历史行情 API 获取 Au99.99 收盘价（人民币/克）
+SGE 贵金属价格采集器
+通过上海黄金交易所官网历史行情 API 获取贵金属收盘价（人民币/克）
 """
 from typing import Optional, Dict, Any
 from datetime import date
@@ -16,27 +16,33 @@ from data_sources.base import make_request
 SGE_HIST_API_URL = "https://www.sge.com.cn/graph/Dailyhq"
 
 
-def fetch_sge_price(target_date: Optional[date] = None) -> Dict[str, Any]:
+def fetch_sge_price(
+    target_date: Optional[date] = None,
+    product_code: Optional[str] = None
+) -> Dict[str, Any]:
     """
-    获取 SGE Au99.99 收盘价
+    获取 SGE 贵金属收盘价
     
     通过 SGE 官网历史行情 API 获取指定日期的收盘价
     API 返回按日期升序排列，取最后一条即为最新数据
     
     Args:
         target_date: 目标日期，默认为当天
+        product_code: 产品代码，如 Au99.99(黄金)、Ag99.99(白银)，默认从配置读取
     
     Returns:
         {
             "success": True/False,
             "date": "YYYY-MM-DD",
+            "product_code": "Au99.99/Ag99.99/...",
             "price": float (人民币/克) 或 None,
             "available": True/False (当日是否有交易),
             "error": 错误信息 或 None
         }
     """
     config = get_config()
-    product_code = config["data_sources"]["sge"]["product_code"]
+    if product_code is None:
+        product_code = config["data_sources"]["sge"]["product_code"]
     
     if target_date is None:
         target_date = date.today()
@@ -62,6 +68,7 @@ def fetch_sge_price(target_date: Optional[date] = None) -> Dict[str, Any]:
             return {
                 "success": False,
                 "date": date_str,
+                "product_code": product_code,
                 "price": None,
                 "available": False,
                 "error": f"HTTP {response.status_code}"
@@ -72,6 +79,7 @@ def fetch_sge_price(target_date: Optional[date] = None) -> Dict[str, Any]:
             return {
                 "success": True,
                 "date": date_str,
+                "product_code": product_code,
                 "price": None,
                 "available": False,
                 "error": None
@@ -86,6 +94,7 @@ def fetch_sge_price(target_date: Optional[date] = None) -> Dict[str, Any]:
             return {
                 "success": True,
                 "date": date_str,
+                "product_code": product_code,
                 "price": float(latest[2]),  # close
                 "available": True,
                 "error": None
@@ -95,6 +104,7 @@ def fetch_sge_price(target_date: Optional[date] = None) -> Dict[str, Any]:
             return {
                 "success": True,
                 "date": date_str,
+                "product_code": product_code,
                 "price": None,
                 "available": False,
                 "error": None
@@ -104,6 +114,7 @@ def fetch_sge_price(target_date: Optional[date] = None) -> Dict[str, Any]:
         return {
             "success": False,
             "date": date_str,
+            "product_code": product_code,
             "price": None,
             "available": False,
             "error": f"API 请求失败: {str(e)}"
@@ -112,10 +123,21 @@ def fetch_sge_price(target_date: Optional[date] = None) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     # 测试代码：使用 2025-11-27 的数据核对
-    test_date = date(2025, 11, 27)
+    test_date = date(2025, 12, 15)
+    
+    print("=== 黄金 Au99.99 ===")
     result = fetch_sge_price(test_date)
     print(f"SGE 采集结果 ({test_date}): {result}")
     
+    print("\n=== 白银 Ag99.99 ===")
+    result = fetch_sge_price(test_date, product_code="Ag99.99")
+    print(f"SGE 采集结果 ({test_date}): {result}")
+    
     # 也测试今天的数据
+    print("\n=== 今日黄金 ===")
     today_result = fetch_sge_price()
+    print(f"SGE 采集结果 (今天): {today_result}")
+
+    print("\n=== 今日白银 ===")
+    today_result = fetch_sge_price(product_code="Ag99.99")
     print(f"SGE 采集结果 (今天): {today_result}")
