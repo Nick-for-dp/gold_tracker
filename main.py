@@ -1,5 +1,5 @@
 """
-Gold Tracker - 黄金价格追踪系统
+Gold Tracker - 贵金属价格追踪系统
 主程序入口
 """
 import sys
@@ -15,22 +15,25 @@ def parse_args() -> argparse.Namespace:
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
         prog="gold_tracker",
-        description="黄金价格追踪系统 - 自动采集 LBMA、SGE 价格和汇率数据",
+        description="贵金属价格追踪系统 - 自动采集 LBMA、SGE 黄金/白银价格和汇率数据",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   python main.py                 # 执行每日黄金采集（默认）
   python main.py --task daily    # 执行每日黄金采集
+  python main.py --task silver   # 执行每日白银采集
   python main.py --task fx       # 执行每日汇率采集
   python main.py --task backup   # 执行数据库备份
   python main.py --task all      # 执行所有任务
   
   # 补录历史数据
-  python main.py --task daily --date 2023-01-01  # 补录指定日期的金价
-  python main.py --task fx --date 2023-01-01     # 补录指定日期的汇率
+  python main.py --task daily --date 2023-01-01   # 补录指定日期的金价
+  python main.py --task silver --date 2023-01-01  # 补录指定日期的银价
+  python main.py --task fx --date 2023-01-01      # 补录指定日期的汇率
 
 Windows 任务计划配置:
   每日黄金采集: 23:30 执行 python main.py --task daily
+  每日白银采集: 23:32 执行 python main.py --task silver
   每日汇率采集: 23:35 执行 python main.py --task fx
   每周备份: 周日 23:45 执行 python main.py --task backup
         """
@@ -38,9 +41,9 @@ Windows 任务计划配置:
     
     parser.add_argument(
         "--task", "-t",
-        choices=["daily", "fx", "backup", "all"],
+        choices=["daily", "silver", "fx", "backup", "all"],
         default="daily",
-        help="任务类型: daily=黄金采集, fx=汇率采集, backup=数据库备份, all=全部 (默认: daily)"
+        help="任务类型: daily=黄金采集, silver=白银采集, fx=汇率采集, backup=数据库备份, all=全部 (默认: daily)"
     )
     
     parser.add_argument(
@@ -67,7 +70,7 @@ def print_banner() -> None:
     """打印启动横幅"""
     print()
     print("╔════════════════════════════════════════╗")
-    print("║     Gold Tracker - 黄金价格追踪系统     ║")
+    print("║    Gold Tracker - 贵金属价格追踪系统    ║")
     print("╚════════════════════════════════════════╝")
     print()
 
