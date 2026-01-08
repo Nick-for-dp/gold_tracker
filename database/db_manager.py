@@ -545,6 +545,106 @@ def get_price_history(days: int = 30) -> List[DailySummary]:
     return summaries
 
 
+def query_metal_price_history(metal_type: str, days: int = 30) -> List[DailySummary]:
+    """
+    查询近 n 天的贵金属价格数据
+    
+    Args:
+        metal_type: 贵金属类型，"gold" 或 "silver"
+        days: 查询天数，最大 30 天
+    
+    Returns:
+        按日期倒序排列的价格记录列表
+    
+    Raises:
+        ValueError: metal_type 不合法或 days 超出范围
+    """
+    if metal_type not in ("gold", "silver"):
+        raise ValueError(f"不支持的贵金属类型: {metal_type}，仅支持 'gold' 或 'silver'")
+    
+    if days < 1 or days > 30:
+        raise ValueError(f"查询天数必须在 1-30 之间，当前值: {days}")
+    
+    if metal_type == "gold":
+        records = get_latest_n_records(days)
+    else:
+        records = get_latest_silver_records(days)
+    
+    summaries: List[DailySummary] = []
+    for record in records:
+        sge_premium_pct: Optional[float] = None
+        if record["sge_close_cny"] is not None and record["theoretical_cny_per_gram"] > 0:
+            sge_premium_pct = (
+                (record["sge_close_cny"] / record["theoretical_cny_per_gram"]) - 1
+            ) * 100
+        
+        summaries.append(DailySummary(
+            date=record["date"],
+            lbma_pm_usd=record["lbma_pm_usd"],
+            sge_close_cny=record["sge_close_cny"],
+            usd_cny=record["usd_cny"],
+            theoretical_cny_per_gram=record["theoretical_cny_per_gram"],
+            sge_premium_pct=sge_premium_pct,
+            status=record["status"],
+            validation_notes=record.get("validation_notes") or "",
+        ))
+    
+    return summaries
+
+
+class ExchangeRateSummary(TypedDict):
+    """汇率查询结果"""
+    date: str
+    usd_cny: Optional[float]
+    jpy_cny: Optional[float]
+    eur_cny: Optional[float]
+
+
+def query_exchange_rate_history(
+    currency_pair: str = "all",
+    days: int = 30
+) -> List[dict]:
+    """
+    查询近 n 天的汇率数据
+    
+    Args:
+        currency_pair: 货币对，"usd_cny" | "jpy_cny" | "eur_cny" | "all"
+        days: 查询天数，最大 30 天
+    
+    Returns:
+        按日期倒序排列的汇率记录列表
+        - 指定货币对时返回: [{"date": "...", "rate": ...}, ...]
+        - "all" 时返回: [{"date": "...", "usd_cny": ..., "jpy_cny": ..., "eur_cny": ...}, ...]
+    
+    Raises:
+        ValueError: currency_pair 不合法或 days 超出范围
+    """
+    valid_pairs = ("usd_cny", "jpy_cny", "eur_cny", "all")
+    if currency_pair not in valid_pairs:
+        raise ValueError(f"不支持的货币对: {currency_pair}，仅支持 {valid_pairs}")
+    
+    if days < 1 or days > 30:
+        raise ValueError(f"查询天数必须在 1-30 之间，当前值: {days}")
+    
+    records = get_latest_exchange_rates(days)
+    
+    if currency_pair == "all":
+        return [
+            {
+                "date": r["date"],
+                "usd_cny": r.get("usd_cny"),
+                "jpy_cny": r.get("jpy_cny"),
+                "eur_cny": r.get("eur_cny"),
+            }
+            for r in records
+        ]
+    else:
+        return [
+            {"date": r["date"], "rate": r.get(currency_pair)}
+            for r in records
+        ]
+
+
 def check_data_integrity(days: int = 30) -> dict:
     """
     检查数据完整性
